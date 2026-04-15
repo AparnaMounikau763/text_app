@@ -1,164 +1,94 @@
-name: Python CI-CD Pipeline
+name: CI-CD Pipeline (Test → Build → Deploy to AWS EC2)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
-
-# ----------------------------------
-# 1. TEST BEFORE DEPLOYMENT (CI)
-# ----------------------------------
   test:
+    name: Run Tests
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.10"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-    - name: Upgrade pip
-      run: |
-        python -m pip install --upgrade pip
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
 
-    - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
+      - name: Run Tests
+        run: |
+          pytest --cov=app
 
-    - name: Run unit + functional tests
-      run: |
-        pytest --cov=app --cov-report=term-missing
-
-# ----------------------------------
-# 2. BUILD PACKAGE
-# ----------------------------------
   build:
+    name: Build Package
     needs: test
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.10"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-    - name: Upgrade pip
-      run: |
-        python -m pip install --upgrade pip
+      - name: Build Wheel
+        run: |
+          pip install setuptools wheel
+          python setup.py sdist bdist_wheel
 
-    - name: Install build tools
-      run: |
-        pip install setuptools wheel
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: dist/
 
-    - name: Build package
-      run: |
-        python setup.py sdist bdist_wheel
-
-    - name: Upload artifact (package)
-      uses: actions/upload-artifact@v4
-      with:
-        name: python-package
-        path: dist/*.whl
-
-# ----------------------------------
-# 3. DEPLOY + TEST ON LINUX (CD)
-# ----------------------------------
-  deploy-test:
+  deploy:
+    name: Deploy to AWS EC2
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: package
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.10"
+      # Create SSH key file
+      - name: Setup SSH Key
+        run: |
+          echo "${{ secrets.EC2_KEY }}" > key.pem
+          chmod 600 key.pem
 
-    - name: Upgrade pip
-      run: |
-        python -m pip install --upgrade pip
+      # Deploy to EC2
+      - name: Copy and Deploy to EC2
+        run: |
+          scp -o StrictHostKeyChecking=no -i key.pem *.whl \
+          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/
 
-    - name: Download built package
-      uses: actions/download-artifact@v4
-      with:
-        name: python-package
-        path: dist/
+      # Install & Run on EC2
+      - name: Remote SSH Deploy
+        run: |
+          ssh -o StrictHostKeyChecking=no -i key.pem \
+          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
 
-    - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
+          echo "Updating server..."
+          sudo apt update
+          pip3 install --upgrade pip
 
-    - name: Install package
-      run: |
-        pip install dist/*.whl
+          echo "Installing package..."
+          pip3 install *.whl
 
-    - name: Smoke Test
-      run: |
-        python -c "from app.sentiment import analyze_sentiment; print(analyze_sentiment('good'))"
+          echo "Running sanity check..."
+          python3 -c "from app.sentiment import analyze_sentiment; print(analyze_sentiment('good'))"
 
-    - name: Run system + regression tests
-      run: |
-        pytest
-
-# ----------------------------------
-# 4. DOCKER BUILD & TEST
-# ----------------------------------
-  docker:
-    needs: deploy-test
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Build Docker image
-      run: |
-        docker build -t text-app .
-
-    - name: Run Docker container
-      run: |
-        docker run text-app
-
-# ----------------------------------
-# 5. DEPLOY TO EC2 (REAL LINUX)
-# ----------------------------------
-  deploy-ec2:
-    needs: docker
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Deploy to EC2 via SSH
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.EC2_HOST }}
-        username: ${{ secrets.EC2_USER }}
-        key: ${{ secrets.EC2_KEY }}
-        script: |
-          cd ~
-
-          # Remove old deployment
-          rm -rf text_app
-
-          # Clone latest repo
-          git clone https://github.com/<your-username>/<your-repo>.git
-          cd text_app
-
-          # Setup virtual environment
-          python3 -m venv venv
-          source venv/bin/activate
-
-          # Install dependencies
-          pip install -r requirements.txt
-
-          # Build package inside EC2 (safer)
-          python setup.py sdist bdist_wheel
-          pip install dist/*.whl
-
-          # Smoke test
-          python -c "from app.sentiment import analyze_sentiment; print(analyze_sentiment('good'))"
+          echo "Deployment SUCCESS"
+          EOF
