@@ -1,0 +1,15 @@
+README.md
+setup.py
+app/__init__.py
+app/processor.py
+app/sentiment.py
+app/validator.py
+tests/__init__.py
+tests/test_pipeline.py
+tests/test_processor.py
+tests/test_sentiment.py
+tests/test_validator.py
+text_app.egg-info/PKG-INFO
+text_app.egg-info/SOURCES.txt
+text_app.egg-info/dependency_links.txt
+text_app.egg-info/top_level.txt
