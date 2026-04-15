@@ -1,16 +1,12 @@
-name: CI-CD Pipeline (Test → Build → Deploy)
+name: CI-CD Pipeline (Test → Build → Deploy to AWS EC2)
 
 on:
   push:
     branches: ["main"]
 
 jobs:
-
-# =========================
-# 🟢 STAGE 1: TESTING
-# =========================
   test:
-    name: Run All Tests (Unit + Integration + System + E2E)
+    name: Run Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -24,20 +20,15 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Pytest (ALL TESTS)
+      - name: Run Tests
         run: |
-          pytest --cov=app --cov-report=term-missing
+          pytest --cov=app
 
-
-# =========================
-# 🟡 STAGE 2: BUILD
-# =========================
   build:
-    name: Build Python Package
-    needs: test   # ONLY runs if tests pass
+    name: Build Package
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
@@ -49,40 +40,55 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Install Build Tools
+      - name: Build Wheel
         run: |
-          python -m pip install --upgrade pip
           pip install setuptools wheel
-
-      - name: Build Package
-        run: |
           python setup.py sdist bdist_wheel
 
-      - name: Upload Build Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: python-package
+          name: package
           path: dist/
 
-
-# =========================
-# 🔴 STAGE 3: DEPLOY (Linux Simulation)
-# =========================
   deploy:
-    name: Deploy to Linux Server (Simulation)
-    needs: build   # ONLY runs if build passes
+    name: Deploy to AWS EC2
+    needs: build
     runs-on: ubuntu-latest
 
     steps:
       - name: Download Build Artifact
         uses: actions/download-artifact@v4
         with:
-          name: python-package
+          name: package
 
-      - name: Simulate Linux Deployment
+      # Create SSH key file
+      - name: Setup SSH Key
         run: |
-          echo "Deploying package on Linux server..."
-          ls -l
-          echo "Installation step:"
-          pip install *.whl
-          echo "Deployment SUCCESS 🚀"
+          echo "${{ secrets.EC2_KEY }}" > key.pem
+          chmod 600 key.pem
+
+      # Deploy to EC2
+      - name: Copy and Deploy to EC2
+        run: |
+          scp -o StrictHostKeyChecking=no -i key.pem *.whl \
+          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/
+
+      # Install & Run on EC2
+      - name: Remote SSH Deploy
+        run: |
+          ssh -o StrictHostKeyChecking=no -i key.pem \
+          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+
+          echo "Updating server..."
+          sudo apt update
+          pip3 install --upgrade pip
+
+          echo "Installing package..."
+          pip3 install *.whl
+
+          echo "Running sanity check..."
+          python3 -c "from app.sentiment import analyze_sentiment; print(analyze_sentiment('good'))"
+
+          echo "Deployment SUCCESS"
+          EOF
