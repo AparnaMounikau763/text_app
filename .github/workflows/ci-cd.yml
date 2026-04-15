@@ -1,33 +1,88 @@
-name: Python CI Pipeline
+name: CI-CD Pipeline (Test → Build → Deploy)
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
+
+# =========================
+# 🟢 STAGE 1: TESTING
+# =========================
   test:
+    name: Run All Tests (Unit + Integration + System + E2E)
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout code
-      - name: Checkout repository
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. Setup Python
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 3. Install dependencies
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4. Run Unit + Functional + Integration + System + E2E tests
-      - name: Run tests with pytest
+      - name: Run Pytest (ALL TESTS)
         run: |
           pytest --cov=app --cov-report=term-missing
+
+
+# =========================
+# 🟡 STAGE 2: BUILD
+# =========================
+  build:
+    name: Build Python Package
+    needs: test   # ONLY runs if tests pass
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Build Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools wheel
+
+      - name: Build Package
+        run: |
+          python setup.py sdist bdist_wheel
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-package
+          path: dist/
+
+
+# =========================
+# 🔴 STAGE 3: DEPLOY (Linux Simulation)
+# =========================
+  deploy:
+    name: Deploy to Linux Server (Simulation)
+    needs: build   # ONLY runs if build passes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package
+
+      - name: Simulate Linux Deployment
+        run: |
+          echo "Deploying package on Linux server..."
+          ls -l
+          echo "Installation step:"
+          pip install *.whl
+          echo "Deployment SUCCESS 🚀"
