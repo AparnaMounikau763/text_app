@@ -6,9 +6,9 @@ on:
 
 jobs:
 
-# -----------------------------
-# 1. TEST BEFORE DEPLOYMENT
-# -----------------------------
+# ----------------------------------
+# 1. TEST BEFORE DEPLOYMENT (CI)
+# ----------------------------------
   test:
     runs-on: ubuntu-latest
 
@@ -25,33 +25,65 @@ jobs:
       run: |
         pip install -r requirements.txt
 
-    - name: Run tests
+    - name: Run unit + functional tests
       run: |
         pytest --cov=app --cov-report=term-missing
 
-# -----------------------------
+# ----------------------------------
 # 2. BUILD PACKAGE
-# -----------------------------
+# ----------------------------------
   build:
     needs: test
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Install build tools
+      run: |
+        pip install setuptools wheel
 
     - name: Build package
       run: |
         python setup.py sdist bdist_wheel
 
-# -----------------------------
-# 3. DEPLOY + TEST ON LINUX
-# -----------------------------
+    - name: Upload artifact (package)
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-package
+        path: dist/*.whl
+
+# ----------------------------------
+# 3. DEPLOY + TEST ON LINUX (CD)
+# ----------------------------------
   deploy-test:
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Download built package
+      uses: actions/download-artifact@v4
+      with:
+        name: python-package
+        path: dist/
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
 
     - name: Install package
       run: |
@@ -61,6 +93,6 @@ jobs:
       run: |
         python -c "from app.sentiment import analyze_sentiment; print(analyze_sentiment('good'))"
 
-    - name: Run tests again (System + Regression)
+    - name: Run system + regression tests
       run: |
         pytest
